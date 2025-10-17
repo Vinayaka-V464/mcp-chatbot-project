@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script type="importmap">{"imports": {"@google/generative-ai": "https://esm.sh/@google/generative-ai"}}</script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e1b4b; }
+        ::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 4px; }
+        .status-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .fa-sync-alt.spin { animation: spin 1.5s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .sidebar-item-active { background-color: #4f46e5; color: white; font-weight: 600; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 antialiased">
+    <div class="flex h-screen overflow-hidden">
+        <aside class="w-80 bg-indigo-900/50 backdrop-blur-sm border-r border-indigo-700 flex flex-col p-4">
+            <div class="flex items-center space-x-3 mb-6">
+                 <div class="p-2 bg-indigo-600 rounded-lg"><i class="fas fa-brain text-white"></i></div>
+                 <h1 class="text-xl font-bold text-white">MCP Chatbot</h1>
+            </div>
+
+            <button id="new-chat-btn" class="w-full text-center bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300 flex items-center justify-center space-x-2 mb-4">
+                <i class="fas fa-plus"></i><span>New General Chat</span>
+            </button>
+            
+            <div class="mb-4">
+                <div class="flex border-b border-indigo-700">
+                    <button onclick="showTab('files')" class="tab-button flex-1 py-2 text-sm font-medium text-gray-400 hover:text-white focus:outline-none active-tab">Documents</button>
+                    <button onclick="showTab('conversations')" class="tab-button flex-1 py-2 text-sm font-medium text-gray-400 hover:text-white focus:outline-none">History</button>
+                </div>
+            </div>
+
+            <div id="files-tab" class="flex-grow overflow-y-auto space-y-1 pr-1">
+                <button id="sync-button" class="w-full text-sm text-center bg-gray-700 hover:bg-gray-600 text-gray-300 py-2 px-4 rounded-lg transition flex items-center justify-center space-x-2 mb-2">
+                    <i id="sync-icon" class="fas fa-sync-alt"></i><span>Sync Files</span>
+                </button>
+                <ul id="file-list" class="space-y-1"></ul>
+            </div>
+            <div id="conversations-tab" class="hidden flex-grow overflow-y-auto space-y-1 pr-1">
+                 <ul id="conversation-list" class="space-y-1"></ul>
+            </div>
+        </aside>
+
+        <main class="flex-1 flex flex-col bg-gray-900">
+            <header class="flex items-center justify-between p-4 border-b border-indigo-700 bg-indigo-900/30">
+                <div id="status-container" class="flex items-center space-x-3">
+                    <div id="mode-indicator" class="py-1 px-3 rounded-full text-xs font-semibold"></div>
+                    <span id="status-text" class="text-sm font-medium text-gray-400"></span>
+                </div>
+            </header>
+
+            <div id="chat-window" class="flex-1 overflow-y-auto p-6 space-y-6"></div>
+
+            <div class="p-4 bg-indigo-900/30 border-t border-indigo-700">
+                <div class="relative">
+                    <input type="text" id="message-input" class="w-full bg-gray-800 border-2 border-indigo-700 rounded-lg py-3 pl-4 pr-12 text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ask about a document or ask me anything...">
+                    <button id="send-button" class="absolute inset-y-0 right-0 flex items-center justify-center w-12 text-gray-400 hover:text-indigo-400 transition">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+<script type="module">
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// --- Configuration & DOM Elements ---
+const API_KEY = "AIzaSyCtkTDavh5kVYHvklLRxxj3f56DpWGsP8o";
+const genAI = new GoogleGenerativeAI(API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash"});
+
+const dom = {
+    chatWindow: document.getElementById('chat-window'),
+    messageInput: document.getElementById('message-input'),
+    sendButton: document.getElementById('send-button'),
+    fileList: document.getElementById('file-list'),
+    conversationList: document.getElementById('conversation-list'),
+    newChatBtn: document.getElementById('new-chat-btn'),
+    syncButton: document.getElementById('sync-button'),
+    syncIcon: document.getElementById('sync-icon'),
+    modeIndicator: document.getElementById('mode-indicator'),
+    statusText: document.getElementById('status-text')
+};
+
+// --- State Management ---
+let state = {
+    mode: 'general', // 'general' or 'document'
+    selectedFile: null,
+    currentConversationId: null,
+    isAIResponding: false,
+};
+
+// --- Core Functions ---
+const initializeApp = async () => {
+    await loadFileList();
+    await loadConversationList();
+    startNewConversation('general', 'New Chat');
+};
+
+const startNewConversation = async (mode, topic) => {
+    displayWelcomeMessage();
+    state.mode = mode;
+    state.selectedFile = mode === 'document' ? topic : null;
+    try {
+        const response = await fetch('/conversations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic })
+        });
+        const data = await response.json();
+        state.currentConversationId = data.conversation_id;
+        updateUI();
+        await loadConversationList();
+    } catch (error) { console.error("Failed to start new conversation:", error); }
+};
+
+const handleSendMessage = async () => {
+    const message = dom.messageInput.value.trim();
+    if (!message || state.isAIResponding) return;
+
+    displayMessage('user', message);
+    saveChatMessage('user', message);
+    dom.messageInput.value = '';
+    state.isAIResponding = true;
+    displayTypingIndicator();
+
+    try {
+        let aiResponseText;
+        if (state.mode === 'document') {
+            const contextResponse = await fetch(`/context/${state.selectedFile}`);
+            const { content } = await contextResponse.json();
+            const prompt = `Based ONLY on this context:\n---\n${content}\n---\nAnswer this question: ${message}`;
+            const result = await model.generateContent(prompt);
+            aiResponseText = result.response.text();
+        } else { // General mode
+            const result = await model.generateContent(message);
+            aiResponseText = result.response.text();
+        }
+        displayMessage('ai', aiResponseText);
+        saveChatMessage('ai', aiResponseText);
+    } catch (error) {
+        displayMessage('ai', "Sorry, I encountered an error. Please try again.");
+        console.error("API Error:", error);
+    } finally {
+        state.isAIResponding = false;
+        removeTypingIndicator();
+    }
+};
+
+const saveChatMessage = async (sender, message) => {
+    if (!state.currentConversationId) return;
+    fetch('/save-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: state.currentConversationId, sender, message })
+    });
+};
+
+// --- Data Loading Functions ---
+const loadFileList = async () => {
+    try {
+        const response = await fetch('/files');
+        const files = await response.json();
+        dom.fileList.innerHTML = '';
+        if (files.length === 0) {
+            dom.fileList.innerHTML = `<li class="text-xs text-gray-500 px-2">No documents synced.</li>`;
+        }
+        files.forEach(filename => {
+            const li = document.createElement('li');
+            li.innerHTML = `<button class="w-full text-left p-2 rounded-md text-sm hover:bg-indigo-700 flex items-center space-x-2"><i class="fas fa-file-alt w-4"></i><span>${filename}</span></button>`;
+            li.onclick = () => startNewConversation('document', filename);
+            dom.fileList.appendChild(li);
+        });
+    } catch (error) { console.error('Error loading files:', error); }
+};
+
+const loadConversationList = async () => {
+    try {
+        const response = await fetch('/conversations');
+        const conversations = await response.json();
+        dom.conversationList.innerHTML = '';
+        if (conversations.length === 0) {
+            dom.conversationList.innerHTML = `<li class="text-xs text-gray-500 px-2">No past conversations.</li>`;
+        }
+        conversations.forEach(convo => {
+            const li = document.createElement('li');
+            const icon = convo.topic.match(/\.(pdf|txt)$/i) ? 'fa-file-alt' : 'fa-comments';
+            li.innerHTML = `<button class="w-full text-left p-2 rounded-md text-sm hover:bg-indigo-700 flex items-center space-x-2"><i class="fas ${icon} w-4"></i><span>${convo.topic}</span></button>`;
+            li.onclick = () => loadConversation(convo.id, convo.topic);
+            if (convo.id === state.currentConversationId) {
+                li.querySelector('button').classList.add('sidebar-item-active');
+            }
+            dom.conversationList.appendChild(li);
+        });
+    } catch (error) { console.error("Error loading conversations:", error); }
+};
+
+const loadConversation = async (convId, topic) => {
+    try {
+        const response = await fetch(`/conversations/${convId}`);
+        const messages = await response.json();
+        dom.chatWindow.innerHTML = '';
+        messages.forEach(msg => displayMessage(msg.sender, msg.message));
+        state.currentConversationId = convId;
+        state.mode = topic.match(/\.(pdf|txt)$/i) ? 'document' : 'general';
+        state.selectedFile = state.mode === 'document' ? topic : null;
+        updateUI();
+        await loadConversationList(); // To highlight the active one
+    } catch (error) { console.error("Failed to load conversation:", error); }
+};
+
+const syncFiles = async () => {
+    dom.syncIcon.classList.add('spin');
+    dom.syncButton.disabled = true;
+    displayMessage('system', 'Syncing files...');
+    try {
+        const response = await fetch('/sync-files', { method: 'POST' });
+        const result = await response.json();
+        displayMessage('system', result.message || result.error);
+        if (response.ok) await loadFileList();
+    } catch (error) { displayMessage('system', `Error: ${error.message}`); }
+    finally {
+        dom.syncIcon.classList.remove('spin');
+        dom.syncButton.disabled = false;
+    }
+};
+
+// --- UI & Utility Functions ---
+const updateUI = () => {
+    if (state.mode === 'document') {
+        dom.modeIndicator.className = 'py-1 px-3 rounded-full text-xs font-semibold bg-green-500 text-white';
+        dom.modeIndicator.textContent = 'DOCUMENT MODE';
+        dom.statusText.textContent = `Chatting about: ${state.selectedFile}`;
+    } else {
+        dom.modeIndicator.className = 'py-1 px-3 rounded-full text-xs font-semibold bg-blue-500 text-white';
+        dom.modeIndicator.textContent = 'GENERAL MODE';
+        dom.statusText.textContent = 'Ask me anything';
+    }
+};
+
+const displayMessage = (sender, message) => {
+    if (dom.chatWindow.querySelector('.welcome-message')) {
+        dom.chatWindow.innerHTML = '';
+    }
+    const div = document.createElement('div');
+    div.className = 'flex items-start space-x-4';
+    const formattedMessage = message.replace(/\n/g, '<br>');
+    if (sender === 'user') {
+        div.innerHTML = `<div class="ml-auto p-4 bg-indigo-600 rounded-lg max-w-xl"><p>${formattedMessage}</p></div><div class="flex-shrink-0 w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center font-bold">You</div>`;
+        div.classList.add('justify-end');
+    } else if (sender === 'ai') {
+        div.innerHTML = `<div class="flex-shrink-0 w-10 h-10 bg-indigo-800 rounded-full flex items-center justify-center font-bold">AI</div><div class="p-4 bg-gray-800 rounded-lg max-w-xl"><p>${formattedMessage}</p></div>`;
+    } else { // System
+        div.innerHTML = `<div class="text-center w-full my-2"><span class="bg-gray-700 text-gray-400 text-xs font-medium px-3 py-1 rounded-full">${message}</span></div>`;
+    }
+    dom.chatWindow.appendChild(div);
+    dom.chatWindow.scrollTop = dom.chatWindow.scrollHeight;
+};
+
+const displayWelcomeMessage = () => {
+    dom.chatWindow.innerHTML = `<div class="welcome-message text-center text-gray-500 pt-10">Start the conversation by sending a message.</div>`;
+};
+const displayTypingIndicator = () => {
+    const indicator = document.createElement('div');
+    indicator.id = 'typing-indicator';
+    indicator.className = 'flex items-start space-x-4';
+    indicator.innerHTML = `<div class="flex-shrink-0 w-10 h-10 bg-indigo-800 rounded-full flex items-center justify-center font-bold">AI</div><div class="p-4 bg-gray-800 rounded-lg max-w-xl flex items-center space-x-2"><span class="status-dot w-2 h-2 bg-gray-400 rounded-full"></span><span class="status-dot w-2 h-2 bg-gray-400 rounded-full" style="animation-delay: 0.2s;"></span><span class="status-dot w-2 h-2 bg-gray-400 rounded-full" style="animation-delay: 0.4s;"></span></div>`;
+    dom.chatWindow.appendChild(indicator);
+    dom.chatWindow.scrollTop = dom.chatWindow.scrollHeight;
+};
+const removeTypingIndicator = () => document.getElementById('typing-indicator')?.remove();
+
+window.showTab = (tabName) => {
+    document.getElementById('files-tab').classList.toggle('hidden', tabName !== 'files');
+    document.getElementById('conversations-tab').classList.toggle('hidden', tabName !== 'conversations');
+    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active-tab'));
+    document.querySelector(`.tab-button:nth-child(${tabName === 'files' ? 1 : 2})`).classList.add('active-tab');
+};
+
+// --- Event Listeners ---
+document.addEventListener('DOMContentLoaded', initializeApp);
+dom.sendButton.addEventListener('click', handleSendMessage);
+dom.messageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendMessage(); } });
+dom.newChatBtn.addEventListener('click', () => startNewConversation('general', 'New Chat'));
+dom.syncButton.addEventListener('click', syncFiles);
+
+</script>
+</body>
+</html>

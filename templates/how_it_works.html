@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How MCP Works</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .flow-arrow {
+            position: relative;
+            padding: 1.5rem;
+        }
+        .flow-arrow::after {
+            content: '↓';
+            font-size: 2rem;
+            color: #a855f7; /* purple-500 */
+            position: absolute;
+            bottom: -1.2rem;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 antialiased">
+    <div class="container mx-auto max-w-4xl py-12 px-4">
+        <h1 class="text-4xl font-bold text-center text-white mb-4">How the Model Context Protocol Works</h1>
+        <p class="text-center text-gray-400 mb-12">A step-by-step guide to the data flow and architecture of the MCP Chatbot.</p>
+
+        <div class="space-y-8">
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 flow-arrow">
+                <div class="flex items-center">
+                    <div class="bg-purple-600 text-white rounded-full w-12 h-12 flex items-center justify-center font-bold text-xl mr-6">1</div>
+                    <div>
+                        <h2 class="text-2xl font-semibold text-white">Upload & Ingestion</h2>
+                        <p class="text-gray-400 mt-2">
+                            The user selects a PDF or TXT file from their local machine. This file is sent from the frontend to the Flask backend's <code class="bg-gray-700 text-purple-400 px-1 rounded">/upload</code> endpoint. The backend saves a copy in the <code class="bg-gray-700 text-purple-400 px-1 rounded">/uploads/</code> folder and uses the <code class="bg-gray-700 text-purple-400 px-1 rounded">PyMuPDF</code> library to extract all text content. This text is then saved into the <code class="bg-gray-700 text-purple-400 px-1 rounded">files</code> table in the SQLite database.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 flow-arrow">
+                <div class="flex items-center">
+                    <div class="bg-purple-600 text-white rounded-full w-12 h-12 flex items-center justify-center font-bold text-xl mr-6">2</div>
+                    <div>
+                        <h2 class="text-2xl font-semibold text-white">AI-Powered File Selection (Call #1)</h2>
+                        <p class="text-gray-400 mt-2">
+                            The user types a natural language request, like "Let's talk about the Q3 report". The frontend sends this query and the list of available filenames to the backend's <code class="bg-gray-700 text-purple-400 px-1 rounded">/select-file</code> endpoint. The **Flask server** makes a secure, server-side API call to Google Gemini, asking it to identify the most relevant filename. Gemini returns only the filename, which is then set as the active context.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 flow-arrow">
+                <div class="flex items-center">
+                    <div class="bg-purple-600 text-white rounded-full w-12 h-12 flex items-center justify-center font-bold text-xl mr-6">3</div>
+                    <div>
+                        <h2 class="text-2xl font-semibold text-white">Retrieval-Augmented Generation (Call #2)</h2>
+                        <p class="text-gray-400 mt-2">
+                            The user asks a specific question about the selected document. The **frontend JavaScript** first fetches the full text content of the active file from the backend. It then constructs a detailed prompt containing this entire document as context and sends it directly to the Google Gemini API from the browser. This ensures Gemini's response is based *exclusively* on the provided material (RAG).
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+             <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <div class="flex items-center">
+                    <div class="bg-purple-600 text-white rounded-full w-12 h-12 flex items-center justify-center font-bold text-xl mr-6">4</div>
+                    <div>
+                        <h2 class="text-2xl font-semibold text-white">History & Display</h2>
+                        <p class="text-gray-400 mt-2">
+                            The AI's answer is displayed in the chat interface. Both the user's question and the AI's response are saved to the <code class="bg-gray-700 text-purple-400 px-1 rounded">chat_history</code> table in the SQLite database, tagged with a unique session ID stored in the browser's local storage. This allows the conversation to persist and be viewed in the "History" tab.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+         <div class="text-center mt-12">
+             <a href="/" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg transition duration-300">Back to Chat</a>
+         </div>
+    </div>
+</body>
+</html>
